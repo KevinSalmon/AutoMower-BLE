@@ -31,40 +31,7 @@ logger = logging.getLogger(__name__)
 class Mower(BLEClient):
     def __init__(self, channel_id: int, address, pin=None):
         super().__init__(channel_id, address, pin)
-        self.keep_alive_event = asyncio.Event()
 
-    async def connect(self, device) -> ResponseResult:
-        """
-        Connect to a device and setup the channel
-
-        Returns a ResponseResult
-        """
-        status = await super().connect(device)
-        if status == ResponseResult.OK:
-            self.task = asyncio.create_task(self._keep_alive())
-        return status
-
-    async def disconnect(self):
-        """
-        Disconnect from the mower, this should be called after every
-        `connect()` before the Python script exits
-        """
-        self.keep_alive_event.set()
-        return await super().disconnect()
-
-    async def _keep_alive(self):
-        """
-        Keep the connection alive by sending a request every 15 seconds.
-        This is needed to prevent the connection from being closed by the mower.
-        """
-        while not self.keep_alive_event.is_set():
-            try:
-                if self.is_connected():
-                    logger.debug("Sending keep alive")
-                    await self.command("KeepAlive")
-            except Exception as e:
-                logger.warning(f"Failed to send keep alive: {e}")
-            await asyncio.sleep(15)
 
     async def command(self, command_name: str, **kwargs):
         """
@@ -73,7 +40,7 @@ class Mower(BLEClient):
         """
         command = Command(self.channel_id, (await self.get_protocol())[command_name])
         request = command.generate_request(**kwargs)
-        response = await self._request_response(request)
+        response = await self.request_response(request)
         if response is None:
             return None
 
