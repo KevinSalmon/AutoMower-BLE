@@ -291,6 +291,9 @@ class BLEClient:
         self.client = None
         self.protocol = None
 
+        self.read_char = None
+        self.write_char = None
+
     async def get_protocol(self):
         if self.protocol is None:
 
@@ -452,6 +455,9 @@ class BLEClient:
                 if char.uuid == "98bd0003-0b0e-421a-84e5-ddbf75dc6de4":
                     self.read_char = char
 
+        if self.write_char is None or self.read_char is None:
+            return ResponseResult.UNKNOWN_ERROR
+
         async def notification_handler(
             characteristic: BleakGATTCharacteristic, data: bytearray
         ):
@@ -545,11 +551,14 @@ class BLEClient:
         `connect()` before the Python script exits
         """
 
-        await self.client.stop_notify(self.read_char)
+        if self.read_char:
+            await self.client.stop_notify(self.read_char)
         await self.queue.put(None)
 
         logger.info("disconnecting...")
         await self.client.disconnect()
+        self.read_char = None
+        self.write_char = None
         logger.info("disconnected")
 
     def generate_request_setup_channel_id(self) -> bytearray:
