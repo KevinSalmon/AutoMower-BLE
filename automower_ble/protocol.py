@@ -288,7 +288,7 @@ class BLEClient:
         return data
 
     async def _write_data(self, data):
-        logger.info("Writing: " + str(binascii.hexlify(data)))
+        logger.info(f"Writing: {binascii.hexlify(data)}" + (f", major: {int.from_bytes(data[12:13], byteorder='little')}, minor: {data[14]}" if len(data) > 14 else ""))
 
         chunk_size = self.MTU_SIZE - 3
         for chunk in (
@@ -328,7 +328,7 @@ class BLEClient:
                 logger.error("Expecting %d bytes, only have %d", length, len(data))
                 return None
 
-        logger.info("Final response: " + str(binascii.hexlify(data)))
+        logger.info(f"Final response: {binascii.hexlify(data)}" + (f", major: {int.from_bytes(data[12:13], byteorder='little')}, minor: {data[14]}" if len(data) > 14 else ""))
 
         return data
 
