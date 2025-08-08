@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 class Mower(BLEClient):
     def __init__(self, channel_id: int, address, pin=None):
         super().__init__(channel_id, address, pin)
-        self.keep_alive_event = asyncio.Event()
 
     async def connect(self, device) -> ResponseResult:
         """
@@ -73,7 +72,7 @@ class Mower(BLEClient):
         """
         command = Command(self.channel_id, (await self.get_protocol())[command_name])
         request = command.generate_request(**kwargs)
-        response = await self._request_response(request)
+        response = await self.request_response(request)
         if response is None:
             return None
 

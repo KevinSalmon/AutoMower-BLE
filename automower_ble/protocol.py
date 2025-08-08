@@ -290,14 +290,12 @@ class BLEClient:
             )
         return self.protocol
 
-    async def _get_response(self):
+    async def _get_response(self, timeout):
         try:
-            data = await asyncio.wait_for(self.queue.get(), timeout=10)
+            data = await asyncio.wait_for(self.queue.get(), timeout=timeout)
 
         except TimeoutError:
             logger.error("Unable to get response from device: '%s'", self.address)
-            if self.is_connected():
-                await self.disconnect()
             return None
 
         return data
@@ -313,15 +311,17 @@ class BLEClient:
 
         logger.debug("Finished writing")
 
-    async def _read_data(self):
-        data = await self._get_response()
+    async def _read_data(self, timeout):
+        data = await self._get_response(timeout)
 
         if data is None:
             return None
 
         if len(data) < 3:
             # We got such a small amount of data, let's try again
-            data = data + await self._get_response()
+            if retry := await self._get_response(timeout) is None:
+                return None
+            data = data + retry
 
             if len(data) < 3:
                 # Something is wrong
@@ -347,38 +347,46 @@ class BLEClient:
 
         return data
 
-    async def _request_response(self, request_data):
+    async def request_response(self, request_data, timeout=10):
+        with self.lock:
+            response = await self._request_response(request_data, timeout)
+            if self.is_connected():
+                await self._disconnect()
+            return response
+
+    async def _request_response(self, request_data, timeout):
         i = 5
-        async with self.lock:
-            while i > 0:
-                try:
-                    # If there are previous responses, flush them out
-                    while not self.queue.empty():
-                        await self.queue.get()
+        while i > 0:
+            try:
+                # If there are previous responses, flush them out
+                while not self.queue.empty():
+                    await self.queue.get()
 
-                    await self._write_data(request_data)
+                await self._write_data(request_data)
 
-                    response_data = await self._read_data()
-                    if response_data is None:
-                        i = i - 1
-                        continue
-
-                except asyncio.exceptions.CancelledError:
-                    logger.debug("Received CancelledError")
+                response_data = await self._read_data(timeout)
+                if response_data is None:
                     i = i - 1
                     continue
 
-                break
+            except asyncio.exceptions.CancelledError:
+                logger.debug("Received CancelledError")
+                i = i - 1
+                continue
+
+            break
 
         if i == 0:
             logger.error("Unable to communicate with device: '%s'", self.address)
-            if self.is_connected():
-                await self.disconnect()
             return None
 
         return response_data
 
     async def connect(self, device) -> ResponseResult:
+        async with self.lock:
+            return await self._connect(device)
+
+    async def _connect(self, device) -> ResponseResult:
         """
         Connect to a device and setup the channel
 
@@ -454,8 +462,13 @@ class BLEClient:
 
         await asyncio.sleep(5.0)
 
-        request = self.generate_request_setup_channel_id()
-        response = await self._request_response(request)
+        response = None
+        for _ in range(4):
+            request = self.generate_request_setup_channel_id()
+            response = await self._request_response(request, timeout=2.5)
+            if response is not None:
+                break
+
         if response is None:
             return ResponseResult.UNKNOWN_ERROR
 
@@ -477,7 +490,8 @@ class BLEClient:
         return ResponseResult.OK
 
     def is_connected(self) -> bool:
-        return bool(self.client and self.client.is_connected)
+        with self.lock:
+            return bool(self.client and self.client.is_connected)
 
     async def probe_gatts(self, device):
         logger.info("connecting to device...")
@@ -532,6 +546,10 @@ class BLEClient:
         return (manufacture, device_type, model)
 
     async def disconnect(self):
+        with self.lock:
+            return await self._disconnect()
+
+    async def _disconnect(self):
         """
         Disconnect from the mower, this should be called after every
         `connect()` before the Python script exits
@@ -539,7 +557,9 @@ class BLEClient:
 
         if self.read_char:
             await self.client.stop_notify(self.read_char)
-        await self.queue.put(None)
+        await self.queue.put(b'')
+        # await self.client.write_gatt_char(self.write_char, chunk, response=False)
+        # ValueError: invalid literal for int() with base 16: '0000None00001000800000805f9b34fb'
 
         logger.info("disconnecting...")
         await self.client.disconnect()
