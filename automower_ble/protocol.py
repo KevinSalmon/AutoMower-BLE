@@ -96,6 +96,7 @@ class TaskInformation:
 class Command:
     def __init__(self, channel_id: int, parameter: dict):
         self.channel_id = channel_id
+        logger.info(f"command channel_id: {self.channel_id}")
 
         self.major = parameter["major"]
         self.minor = parameter["minor"]
@@ -265,6 +266,8 @@ class Command:
 class BLEClient:
     def __init__(self, channel_id: int, address, pin=None):
         self.channel_id = channel_id
+
+        logger.info(f"ble client channel_id: {channel_id}")
         self.address = address
         self.pin = pin
         self.MTU_SIZE = 20
@@ -274,6 +277,9 @@ class BLEClient:
 
         self.client: BleakClient | None = None
         self.protocol = None
+
+        #self.read_char = None
+        #self.write_char = None
 
     async def get_protocol(self):
         if self.protocol is None:
@@ -298,12 +304,14 @@ class BLEClient:
         return data
 
     async def _write_data(self, data):
-        logger.info("Writing: %s", str(binascii.hexlify(data)))
+        logger.debug("Writing: %s", str(binascii.hexlify(data)))
 
         chunk_size = self.MTU_SIZE - 3
         for chunk in (
             data[i : i + chunk_size] for i in range(0, len(data), chunk_size)
         ):
+            logger.debug("Writing chunk: %s %s", str(binascii.hexlify(chunk)), str(self.write_char))
+            # self.write_char is None
             await self.client.write_gatt_char(self.write_char, chunk, response=False)
 
         logger.debug("Finished writing")
@@ -438,15 +446,18 @@ class BLEClient:
                 if char.uuid == "98bd0003-0b0e-421a-84e5-ddbf75dc6de4":
                     self.read_char = char
 
+        #if self.write_char is None or self.read_char is None:
+        #    return ResponseResult.NOT_ALLOWED
+
         async def notification_handler(
             characteristic: BleakGATTCharacteristic, data: bytearray
         ):
-            logger.info("Received: %s", str(binascii.hexlify(data)))
+            logger.debug("Received: %s", str(binascii.hexlify(data)))
             await self.queue.put(data)
 
         await self.client.start_notify(self.read_char, notification_handler)
 
-        await asyncio.sleep(5.0)
+        await asyncio.sleep(5.0) # TODO
 
         request = self.generate_request_setup_channel_id()
         response = await self._request_response(request)
@@ -539,11 +550,15 @@ class BLEClient:
         `connect()` before the Python script exits
         """
 
+        #if self.read_char:
+        #    await self.client.stop_notify(self.read_char)
         await self.client.stop_notify(self.read_char)
         await self.queue.put(None)
 
         logger.info("disconnecting...")
         await self.client.disconnect()
+        #self.read_char = None
+        #self.write_char = None
         logger.info("disconnected")
 
     def generate_request_setup_channel_id(self) -> bytearray:
